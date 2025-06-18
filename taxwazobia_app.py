@@ -1,14 +1,21 @@
 import os
 from dotenv import load_dotenv
+from flask import Flask, request  # ✅ Missing import
 import openai
+import telegram  # ✅ Missing import
+
+# Load environment variables
 load_dotenv()
 
+# Set up API keys
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
-
+# Initialize OpenAI and Telegram Bot
 openai.api_key = OPENAI_API_KEY
 bot = telegram.Bot(token=TELEGRAM_TOKEN)
+
+# Set up Flask app
 app = Flask(__name__)
 
 @app.route(f"/{TELEGRAM_TOKEN}", methods=["POST"])
