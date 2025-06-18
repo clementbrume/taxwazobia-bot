@@ -1,2 +1,2 @@
-web: gunicorn taxwazobia_bot:app
+web: gunicorn taxwazobia_app:app
 
