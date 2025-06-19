@@ -1,27 +1,40 @@
 import os
+import json
 from dotenv import load_dotenv
-from flask import Flask, request, jsonify
+from flask import Flask, request
 import openai
 import telegram
-from collections import defaultdict
 
 # Load environment variables
 load_dotenv()
 
-# Set up API keys
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
-# Initialize OpenAI and Telegram Bot
 openai.api_key = OPENAI_API_KEY
 bot = telegram.Bot(token=TELEGRAM_TOKEN)
-
-# Set up Flask app
 app = Flask(__name__)
 
-# 🔢 Metrics containers
-unique_users = set()
-error_counts = defaultdict(int)
+METRICS_FILE = "metrics.json"
+
+# Initialize metrics file if it doesn't exist
+if not os.path.exists(METRICS_FILE):
+    with open(METRICS_FILE, "w") as f:
+        json.dump({"user_count": 0, "error_count": 0, "users": []}, f)
+
+def update_metrics(chat_id=None, error=False):
+    with open(METRICS_FILE, "r") as f:
+        metrics = json.load(f)
+
+    if chat_id is not None and chat_id not in metrics["users"]:
+        metrics["users"].append(chat_id)
+        metrics["user_count"] = len(metrics["users"])
+
+    if error:
+        metrics["error_count"] += 1
+
+    with open(METRICS_FILE, "w") as f:
+        json.dump(metrics, f, indent=2)
 
 @app.route(f"/{TELEGRAM_TOKEN}", methods=["POST"])
 def receive_update():
@@ -37,10 +50,9 @@ def receive_update():
         user_text = message.text.strip()
         print(f"📥 Message received: '{user_text}' from chat ID: {chat_id}")
 
-        # Track unique user
-        unique_users.add(chat_id)
+        # Track user
+        update_metrics(chat_id=chat_id)
 
-        # ✅ Handle /start command
         if user_text.lower().startswith("/start"):
             welcome_message = (
                 "*👋 Welcome to TaxWazobia!*\n\n"
@@ -57,12 +69,12 @@ def receive_update():
             print("✅ Sent welcome message")
             return "OK"
 
-        # ✅ Typing indicator
+        # Typing indicator
         bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.TYPING)
 
-        # ✅ GPT Response
+        # OpenAI GPT response
         try:
-            gpt_response = openai.ChatCompletion.create(
+            response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
                 messages=[
                     {
@@ -79,7 +91,7 @@ def receive_update():
                 max_tokens=700
             )
 
-            reply = gpt_response['choices'][0]['message']['content']
+            reply = response['choices'][0]['message']['content']
             print("🤖 OpenAI response:", reply)
 
             bot.send_message(chat_id=chat_id, text=reply, parse_mode="Markdown")
@@ -87,8 +99,8 @@ def receive_update():
             return "OK"
 
         except Exception as ai_error:
-            error_counts["openai"] += 1
-            print(f"❌ OpenAI error (Total: {error_counts['openai']}):", ai_error)
+            print("❌ OpenAI error:", ai_error)
+            update_metrics(error=True)
             bot.send_message(
                 chat_id=chat_id,
                 text="🤖 Sorry, I couldn’t process that right now. Please try again shortly."
@@ -97,18 +109,12 @@ def receive_update():
 
     except Exception as e:
         print("❌ General error:", e)
+        update_metrics(error=True)
         return "Error", 500
 
 @app.route("/")
 def index():
     return "✅ TaxWazobia bot is running."
-
-@app.route("/metrics")
-def metrics():
-    return jsonify({
-        "unique_users": len(unique_users),
-        "openai_errors": error_counts["openai"]
-    })
 
 if __name__ == "__main__":
     print("🚀 TaxWazobia is live and listening on port 5000...")
