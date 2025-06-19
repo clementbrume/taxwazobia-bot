@@ -1,8 +1,9 @@
 import os
 from dotenv import load_dotenv
-from flask import Flask, request
+from flask import Flask, request, jsonify
 import openai
 import telegram
+from collections import defaultdict
 
 # Load environment variables
 load_dotenv()
@@ -18,6 +19,10 @@ bot = telegram.Bot(token=TELEGRAM_TOKEN)
 # Set up Flask app
 app = Flask(__name__)
 
+# 🔢 Metrics containers
+unique_users = set()
+error_counts = defaultdict(int)
+
 @app.route(f"/{TELEGRAM_TOKEN}", methods=["POST"])
 def receive_update():
     try:
@@ -31,6 +36,9 @@ def receive_update():
         chat_id = message.chat.id
         user_text = message.text.strip()
         print(f"📥 Message received: '{user_text}' from chat ID: {chat_id}")
+
+        # Track unique user
+        unique_users.add(chat_id)
 
         # ✅ Handle /start command
         if user_text.lower().startswith("/start"):
@@ -71,15 +79,16 @@ def receive_update():
                 max_tokens=700
             )
 
-            reply = response['choices'][0]['message']['content']
-print("🤖 OpenAI response:", reply)
+            reply = gpt_response['choices'][0]['message']['content']
+            print("🤖 OpenAI response:", reply)
 
             bot.send_message(chat_id=chat_id, text=reply, parse_mode="Markdown")
             print("✅ Sent OpenAI response")
             return "OK"
 
         except Exception as ai_error:
-            print("❌ OpenAI error:", ai_error)
+            error_counts["openai"] += 1
+            print(f"❌ OpenAI error (Total: {error_counts['openai']}):", ai_error)
             bot.send_message(
                 chat_id=chat_id,
                 text="🤖 Sorry, I couldn’t process that right now. Please try again shortly."
@@ -93,6 +102,13 @@ print("🤖 OpenAI response:", reply)
 @app.route("/")
 def index():
     return "✅ TaxWazobia bot is running."
+
+@app.route("/metrics")
+def metrics():
+    return jsonify({
+        "unique_users": len(unique_users),
+        "openai_errors": error_counts["openai"]
+    })
 
 if __name__ == "__main__":
     print("🚀 TaxWazobia is live and listening on port 5000...")
