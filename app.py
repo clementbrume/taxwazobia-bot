@@ -22,6 +22,7 @@ if not os.path.exists(METRICS_FILE):
     with open(METRICS_FILE, "w") as f:
         json.dump({"user_count": 0, "error_count": 0, "users": []}, f)
 
+# Function to update user and error metrics
 def update_metrics(chat_id=None, error=False):
     with open(METRICS_FILE, "r") as f:
         metrics = json.load(f)
@@ -36,6 +37,7 @@ def update_metrics(chat_id=None, error=False):
     with open(METRICS_FILE, "w") as f:
         json.dump(metrics, f, indent=2)
 
+# Main webhook route for receiving Telegram messages
 @app.route(f"/{TELEGRAM_TOKEN}", methods=["POST"])
 def receive_update():
     try:
@@ -53,6 +55,7 @@ def receive_update():
         # Track user
         update_metrics(chat_id=chat_id)
 
+        # Handle /start command
         if user_text.lower().startswith("/start"):
             welcome_message = (
                 "*👋 Welcome to TaxWazobia!*\n\n"
@@ -72,7 +75,7 @@ def receive_update():
         # Typing indicator
         bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.TYPING)
 
-        # OpenAI GPT response
+        # GPT response logic
         try:
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
@@ -101,10 +104,19 @@ def receive_update():
         except Exception as ai_error:
             print("❌ OpenAI error:", ai_error)
             update_metrics(error=True)
-            bot.send_message(
-                chat_id=chat_id,
-                text="🤖 Sorry, I couldn’t process that right now. Please try again shortly."
-            )
+
+            error_message = str(ai_error).lower()
+
+            if "rate limit" in error_message:
+                user_friendly_msg = "🚦 Too many requests. Please wait a moment and try again."
+            elif "invalid request" in error_message:
+                user_friendly_msg = "⚠️ That didn’t go through. Try rephrasing your question."
+            elif "authentication" in error_message:
+                user_friendly_msg = "🔐 There’s a problem with the AI key. Try again later."
+            else:
+                user_friendly_msg = "🤖 Sorry, I couldn’t process that now. Try again shortly."
+
+            bot.send_message(chat_id=chat_id, text=user_friendly_msg)
             return "OK"
 
     except Exception as e:
@@ -112,10 +124,12 @@ def receive_update():
         update_metrics(error=True)
         return "Error", 500
 
+# Root route to verify Render is up
 @app.route("/")
 def index():
     return "✅ TaxWazobia bot is running."
 
+# Run app locally for development
 if __name__ == "__main__":
     print("🚀 TaxWazobia is live and listening on port 5000...")
     app.run(port=5000)
