@@ -1,21 +1,26 @@
 import os
-from dotenv import load_dotenv
-from flask import Flask, request  # ✅ Missing import
+import logging
+from flask import Flask, request
 import openai
-import telegram  # ✅ Missing import
+import telegram
+from dotenv import load_dotenv
 
-# Load environment variables
+# === Load environment variables ===
 load_dotenv()
-
-# Set up API keys
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
-# Initialize OpenAI and Telegram Bot
+# === Set API keys ===
 openai.api_key = OPENAI_API_KEY
 bot = telegram.Bot(token=TELEGRAM_TOKEN)
 
-# Set up Flask app
+# === Set up logging ===
+logging.basicConfig(
+    format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+# === Set up Flask ===
 app = Flask(__name__)
 
 @app.route(f"/{TELEGRAM_TOKEN}", methods=["POST"])
@@ -25,14 +30,14 @@ def receive_update():
         message = update.message
 
         if not message or not message.text:
-            print("⚠️ No message text received.")
+            logger.warning("No message text received.")
             return "OK"
 
         chat_id = message.chat.id
         user_text = message.text.strip()
-        print(f"📥 Message received: '{user_text}' from chat ID: {chat_id}")
+        logger.info(f"Received from {chat_id}: {user_text}")
 
-        # ✅ Handle /start command
+        # === /start command ===
         if user_text.lower().startswith("/start"):
             welcome_message = (
                 "👋 *Welcome to TaxWazobia!*\n\n"
@@ -42,14 +47,14 @@ def receive_update():
                 "• Understand VAT, PAYE, and Company Income Tax\n"
                 "• Stay compliant with FIRS and state regulations\n\n"
                 "💬 Just ask me anything, like:\n"
-                "How much PIT should I pay on ₦300,000?\n\n"
+                "_How much PIT should I pay on ₦300,000?_\n\n"
                 "Type /help anytime to see what I can do!"
             )
             bot.send_message(chat_id=chat_id, text=welcome_message, parse_mode="Markdown")
-            print("✅ Sent welcome message")
+            logger.info("Sent welcome message")
             return "OK"
 
-        # ✅ Handle general AI response
+        # === AI response ===
         try:
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
@@ -60,19 +65,18 @@ def receive_update():
                 temperature=0.4,
                 max_tokens=500
             )
-
             reply = response['choices'][0]['message']['content']
             bot.send_message(chat_id=chat_id, text=reply)
-            print("✅ Sent OpenAI reply")
+            logger.info("Sent OpenAI reply")
             return "OK"
 
         except Exception as ai_error:
-            print("❌ OpenAI error:", ai_error)
-            bot.send_message(chat_id=chat_id, text="Sorry, I had trouble thinking. Try again in a moment.")
+            logger.error(f"OpenAI error: {ai_error}")
+            bot.send_message(chat_id=chat_id, text="⚠️ I'm having trouble thinking. Please try again shortly.")
             return "OK"
 
     except Exception as e:
-        print("❌ General error:", e)
+        logger.error(f"General error: {e}")
         return "Error", 500
 
 @app.route("/")
@@ -80,5 +84,5 @@ def index():
     return "✅ TaxWazobia bot is running."
 
 if __name__ == "__main__":
-    print("🚀 TaxWazobia is live and listening on port 5000...")
-    app.run(port=5000)
+    logger.info("🚀 TaxWazobia bot is live.")
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
