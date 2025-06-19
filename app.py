@@ -71,7 +71,9 @@ def receive_update():
                 max_tokens=700
             )
 
-            reply = gpt_response["choices"][0]["message"]["content"].strip()
+            reply = response['choices'][0]['message']['content']
+print("🤖 OpenAI response:", reply)
+
             bot.send_message(chat_id=chat_id, text=reply, parse_mode="Markdown")
             print("✅ Sent OpenAI response")
             return "OK"
