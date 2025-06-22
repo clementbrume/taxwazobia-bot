@@ -3,3 +3,4 @@ openai==0.28
 python-telegram-bot==13.15
 python-dotenv
 gunicorn
+psycopg2-binary==2.9.9
