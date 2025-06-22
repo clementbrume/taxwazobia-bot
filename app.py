@@ -4,30 +4,24 @@ from flask import Flask, request, jsonify
 import openai
 import telegram
 import psycopg2
-from psycopg2.extras import RealDictCursor
 from datetime import datetime
 
 # Load environment variables
 load_dotenv()
 
-# API Keys
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+DB_NAME = os.getenv("DB_NAME")
+DB_USER = os.getenv("DB_USER")
+DB_PASSWORD = os.getenv("DB_PASSWORD")
+DB_HOST = os.getenv("DB_HOST")
+DB_PORT = os.getenv("DB_PORT", "5432")
 
 openai.api_key = OPENAI_API_KEY
 bot = telegram.Bot(token=TELEGRAM_TOKEN)
-
-# Flask App
 app = Flask(__name__)
 
-# PostgreSQL connection details
-DB_NAME = "taxwazobia_db"
-DB_USER = "taxwazobia_db_user"
-DB_PASSWORD = "Aecev0c6mWOhxrSqwISXqpRWmhi26ZLX"
-DB_HOST = "dpg-d1blorre5dus73eoe5eg-a.frankfurt-postgres.render.com"
-DB_PORT = "5432"
-
-def get_db_connection():
+def connect_db():
     return psycopg2.connect(
         dbname=DB_NAME,
         user=DB_USER,
@@ -39,29 +33,25 @@ def get_db_connection():
 
 def update_metrics(chat_id=None, error=False):
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
+        conn = connect_db()
+        cur = conn.cursor()
 
-        # Check if user exists
-        cursor.execute("SELECT id FROM usage_metrics WHERE chat_id = %s", (chat_id,))
-        user = cursor.fetchone()
+        if chat_id:
+            cur.execute("SELECT id FROM usage_metrics WHERE chat_id = %s;", (chat_id,))
+            if cur.fetchone() is None:
+                cur.execute(
+                    "INSERT INTO usage_metrics (chat_id, first_seen, error_count) VALUES (%s, %s, %s);",
+                    (chat_id, datetime.utcnow(), 0)
+                )
 
-        if not user:
-            cursor.execute(
-                "INSERT INTO usage_metrics (chat_id) VALUES (%s)",
-                (chat_id,)
-            )
-        elif error:
-            cursor.execute(
-                "UPDATE usage_metrics SET error_count = error_count + 1 WHERE chat_id = %s",
-                (chat_id,)
-            )
+        if error and chat_id:
+            cur.execute("UPDATE usage_metrics SET error_count = error_count + 1 WHERE chat_id = %s;", (chat_id,))
 
         conn.commit()
-        cursor.close()
+        cur.close()
         conn.close()
-    except Exception as db_error:
-        print("❌ Failed to update metrics:", db_error)
+    except Exception as e:
+        print("❌ DB metrics error:", e)
 
 @app.route(f"/{TELEGRAM_TOKEN}", methods=["POST"])
 def receive_update():
@@ -125,7 +115,10 @@ def receive_update():
         except Exception as ai_error:
             print("❌ OpenAI error:", ai_error)
             update_metrics(chat_id=chat_id, error=True)
-            bot.send_message(chat_id=chat_id, text="🤖 Sorry, I couldn’t process that right now. Please try again shortly.")
+            bot.send_message(
+                chat_id=chat_id,
+                text="🤖 Sorry, I couldn’t process that right now. Please try again shortly."
+            )
             return "OK"
 
     except Exception as e:
@@ -140,25 +133,18 @@ def index():
 @app.route("/metrics")
 def metrics():
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        cursor.execute("SELECT COUNT(*) AS user_count FROM usage_metrics")
-        user_count = cursor.fetchone()["user_count"]
-
-        cursor.execute("SELECT SUM(error_count) AS error_count FROM usage_metrics")
-        error_count = cursor.fetchone()["error_count"] or 0
-
-        cursor.close()
+        conn = connect_db()
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM usage_metrics;")
+        user_count = cur.fetchone()[0]
+        cur.execute("SELECT SUM(error_count) FROM usage_metrics;")
+        error_count = cur.fetchone()[0] or 0
+        cur.close()
         conn.close()
-
-        return jsonify({
-            "user_count": user_count,
-            "error_count": error_count
-        })
-
+        return jsonify({"user_count": user_count, "error_count": error_count})
     except Exception as e:
-        print("❌ Failed to fetch metrics:", e)
-        return jsonify({"error": "Failed to fetch metrics"}), 500
+        print("❌ Metrics endpoint error:", e)
+        return jsonify({"error": "Unable to fetch metrics"}), 500
 
 if __name__ == "__main__":
     print("🚀 TaxWazobia is live and listening on port 5000...")
