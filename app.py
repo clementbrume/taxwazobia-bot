@@ -45,4 +45,4 @@ def update_metrics(new_user=False, error=False):
 # Define your webhook route, GPT logic, etc…
 @app.route(f"/{TELEGRAM_TOKEN}", methods=["POST"])
 def receive_update():
-    # ...
+    # placeholder to avoid syntax error
