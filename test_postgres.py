@@ -5,7 +5,7 @@ import os
 DB_NAME = "taxwazobia_db"
 DB_USER = "taxwazobia_db_user"
 DB_PASSWORD = "Aecev0c6mWOhxrSqwISXqpRWmhi26ZLX"
-DB_HOST = "dpg-d1blorre5dus73eoe5eg-a"
+DB_HOST = "dpg-d1blorre5dus73eoe5eg-a.render.com"
 DB_PORT = "5432"  # Always 5432 for Render
 
 try:
