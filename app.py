@@ -1,40 +1,67 @@
 import os
-import json
 from dotenv import load_dotenv
 from flask import Flask, request, jsonify
 import openai
 import telegram
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from datetime import datetime
 
 # Load environment variables
 load_dotenv()
 
+# API Keys
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
 openai.api_key = OPENAI_API_KEY
 bot = telegram.Bot(token=TELEGRAM_TOKEN)
+
+# Flask App
 app = Flask(__name__)
 
-METRICS_FILE = "metrics.json"
+# PostgreSQL connection details
+DB_NAME = "taxwazobia_db"
+DB_USER = "taxwazobia_db_user"
+DB_PASSWORD = "Aecev0c6mWOhxrSqwISXqpRWmhi26ZLX"
+DB_HOST = "dpg-d1blorre5dus73eoe5eg-a.frankfurt-postgres.render.com"
+DB_PORT = "5432"
 
-# Initialize metrics file if it doesn't exist
-if not os.path.exists(METRICS_FILE):
-    with open(METRICS_FILE, "w") as f:
-        json.dump({"user_count": 0, "error_count": 0, "users": []}, f)
+def get_db_connection():
+    return psycopg2.connect(
+        dbname=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        host=DB_HOST,
+        port=DB_PORT,
+        sslmode="require"
+    )
 
 def update_metrics(chat_id=None, error=False):
-    with open(METRICS_FILE, "r") as f:
-        metrics = json.load(f)
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
 
-    if chat_id is not None and chat_id not in metrics["users"]:
-        metrics["users"].append(chat_id)
-        metrics["user_count"] = len(metrics["users"])
+        # Check if user exists
+        cursor.execute("SELECT id FROM usage_metrics WHERE chat_id = %s", (chat_id,))
+        user = cursor.fetchone()
 
-    if error:
-        metrics["error_count"] += 1
+        if not user:
+            cursor.execute(
+                "INSERT INTO usage_metrics (chat_id) VALUES (%s)",
+                (chat_id,)
+            )
+        elif error:
+            cursor.execute(
+                "UPDATE usage_metrics SET error_count = error_count + 1 WHERE chat_id = %s",
+                (chat_id,)
+            )
 
-    with open(METRICS_FILE, "w") as f:
-        json.dump(metrics, f, indent=2)
+        conn.commit()
+        cursor.close()
+        conn.close()
+    except Exception as db_error:
+        print("❌ Failed to update metrics:", db_error)
 
 @app.route(f"/{TELEGRAM_TOKEN}", methods=["POST"])
 def receive_update():
@@ -50,7 +77,6 @@ def receive_update():
         user_text = message.text.strip()
         print(f"📥 Message received: '{user_text}' from chat ID: {chat_id}")
 
-        # Track user
         update_metrics(chat_id=chat_id)
 
         if user_text.lower().startswith("/start"):
@@ -69,10 +95,8 @@ def receive_update():
             print("✅ Sent welcome message")
             return "OK"
 
-        # Typing indicator
         bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.TYPING)
 
-        # OpenAI GPT response
         try:
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
@@ -100,11 +124,8 @@ def receive_update():
 
         except Exception as ai_error:
             print("❌ OpenAI error:", ai_error)
-            update_metrics(error=True)
-            bot.send_message(
-                chat_id=chat_id,
-                text="🤖 Sorry, I couldn’t process that right now. Please try again shortly."
-            )
+            update_metrics(chat_id=chat_id, error=True)
+            bot.send_message(chat_id=chat_id, text="🤖 Sorry, I couldn’t process that right now. Please try again shortly.")
             return "OK"
 
     except Exception as e:
@@ -118,10 +139,26 @@ def index():
 
 @app.route("/metrics")
 def metrics():
-    if os.path.exists(METRICS_FILE):
-        with open(METRICS_FILE, "r") as f:
-            return jsonify(json.load(f))
-    return jsonify({"error": "No metrics available"}), 404
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("SELECT COUNT(*) AS user_count FROM usage_metrics")
+        user_count = cursor.fetchone()["user_count"]
+
+        cursor.execute("SELECT SUM(error_count) AS error_count FROM usage_metrics")
+        error_count = cursor.fetchone()["error_count"] or 0
+
+        cursor.close()
+        conn.close()
+
+        return jsonify({
+            "user_count": user_count,
+            "error_count": error_count
+        })
+
+    except Exception as e:
+        print("❌ Failed to fetch metrics:", e)
+        return jsonify({"error": "Failed to fetch metrics"}), 500
 
 if __name__ == "__main__":
     print("🚀 TaxWazobia is live and listening on port 5000...")
