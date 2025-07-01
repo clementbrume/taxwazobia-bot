@@ -9,6 +9,7 @@ from datetime import datetime
 # Load environment variables
 load_dotenv()
 
+# Environment variables
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 DB_NAME = os.getenv("DB_NAME")
@@ -17,10 +18,12 @@ DB_PASSWORD = os.getenv("DB_PASSWORD")
 DB_HOST = os.getenv("DB_HOST")
 DB_PORT = os.getenv("DB_PORT", "5432")
 
+# Initialize clients
 openai.api_key = OPENAI_API_KEY
 bot = telegram.Bot(token=TELEGRAM_TOKEN)
 app = Flask(__name__)
 
+# DB connection helper
 def connect_db():
     return psycopg2.connect(
         dbname=DB_NAME,
@@ -31,6 +34,7 @@ def connect_db():
         sslmode="require"
     )
 
+# Metrics tracker
 def update_metrics(chat_id=None, error=False):
     try:
         conn = connect_db()
@@ -53,6 +57,7 @@ def update_metrics(chat_id=None, error=False):
     except Exception as e:
         print("❌ DB metrics error:", e)
 
+# Webhook endpoint
 @app.route(f"/{TELEGRAM_TOKEN}", methods=["POST"])
 def receive_update():
     try:
@@ -126,26 +131,32 @@ def receive_update():
         update_metrics(error=True)
         return "Error", 500
 
+# Health check
 @app.route("/")
 def index():
     return "✅ TaxWazobia bot is running."
 
+# Metrics endpoint
 @app.route("/metrics")
 def metrics():
     try:
         conn = connect_db()
         cur = conn.cursor()
         cur.execute("SELECT COUNT(*) FROM usage_metrics;")
-        user_count = cur.fetchone()[0]
+        user_count = cur.fetchone()[0] or 0
         cur.execute("SELECT SUM(error_count) FROM usage_metrics;")
         error_count = cur.fetchone()[0] or 0
         cur.close()
         conn.close()
-        return jsonify({"user_count": user_count, "error_count": error_count})
+        return jsonify({
+            "user_count": int(user_count),
+            "error_count": int(error_count)
+        })
     except Exception as e:
         print("❌ Metrics endpoint error:", e)
         return jsonify({"error": "Unable to fetch metrics"}), 500
 
+# Local dev only
 if __name__ == "__main__":
     print("🚀 TaxWazobia is live and listening on port 5000...")
     app.run(port=5000)
