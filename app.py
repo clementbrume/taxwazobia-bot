@@ -1,7 +1,7 @@
 import os
-import pickle
-import faiss
+import json
 import numpy as np
+import faiss
 from dotenv import load_dotenv
 from flask import Flask, request, jsonify
 import openai
@@ -12,7 +12,7 @@ from datetime import datetime
 # Load environment variables
 load_dotenv()
 
-# Environment variables
+# Env vars
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 DB_NAME = os.getenv("DB_NAME")
@@ -21,24 +21,19 @@ DB_PASSWORD = os.getenv("DB_PASSWORD")
 DB_HOST = os.getenv("DB_HOST")
 DB_PORT = os.getenv("DB_PORT", "5432")
 
-# Initialize clients
 openai.api_key = OPENAI_API_KEY
 bot = telegram.Bot(token=TELEGRAM_TOKEN)
 app = Flask(__name__)
 
-# Load FAISS index
-INDEX_PATH = "faiss_index"
-try:
-    index = faiss.read_index(f"{INDEX_PATH}/index.faiss")
-    with open(f"{INDEX_PATH}/documents.pkl", "rb") as f:
-        documents = pickle.load(f)
-    print("📚 Knowledge base index loaded.")
-except Exception as e:
-    index = None
-    documents = []
-    print("⚠️ Failed to load knowledge base:", e)
+# === Load FAISS index & sources ===
+INDEX_PATH = "knowledge_base/index.faiss"
+SOURCES_PATH = "knowledge_base/sources.json"
 
-# DB connection helper
+faiss_index = faiss.read_index(INDEX_PATH)
+with open(SOURCES_PATH, "r", encoding="utf-8") as f:
+    source_texts = json.load(f)
+
+# === DB Connection ===
 def connect_db():
     return psycopg2.connect(
         dbname=DB_NAME,
@@ -49,7 +44,6 @@ def connect_db():
         sslmode="require"
     )
 
-# Metrics tracker
 def update_metrics(chat_id=None, error=False):
     try:
         conn = connect_db()
@@ -72,21 +66,22 @@ def update_metrics(chat_id=None, error=False):
     except Exception as e:
         print("❌ DB metrics error:", e)
 
-# Search knowledge base
-def search_knowledge_base(query, top_k=3):
-    try:
-        response = openai.embeddings.create(
-            model="text-embedding-3-small",
-            input=query
-        )
-        query_vector = np.array(response.data[0].embedding, dtype="float32").reshape(1, -1)
-        _, indices = index.search(query_vector, top_k)
-        return [documents[i] for i in indices[0] if i < len(documents)]
-    except Exception as e:
-        print("❌ Knowledge base search error:", e)
-        return []
+# === Embedding Helper ===
+def embed_query(text):
+    response = openai.Embedding.create(
+        model="text-embedding-ada-002",
+        input=text
+    )
+    return np.array(response['data'][0]['embedding'], dtype=np.float32)
 
-# Webhook endpoint
+# === Retrieve Context from FAISS ===
+def get_context(query, top_k=3):
+    query_vec = embed_query(query).reshape(1, -1)
+    D, I = faiss_index.search(query_vec, top_k)
+    results = [source_texts[i] for i in I[0] if i < len(source_texts)]
+    return "\n\n".join(results)
+
+# === Telegram Webhook ===
 @app.route(f"/{TELEGRAM_TOKEN}", methods=["POST"])
 def receive_update():
     try:
@@ -99,7 +94,7 @@ def receive_update():
 
         chat_id = message.chat.id
         user_text = message.text.strip()
-        print(f"📥 Message received: '{user_text}' from chat ID: {chat_id}")
+        print(f"📥 Message from {chat_id}: {user_text}")
 
         update_metrics(chat_id=chat_id)
 
@@ -109,45 +104,45 @@ def receive_update():
                 "🇳🇬 _Your AI-powered tax assistant for Nigerian tax matters._\n\n"
                 "*What I can help you with:*\n"
                 "• Calculate your *Personal Income Tax (PIT)*\n"
-                "• Explain *VAT, PAYE, Company Income Tax (CIT)*\n"
+                "• Explain *VAT, PAYE, CIT, etc.*\n"
                 "• Guide on FIRS/state rules\n\n"
-                "_Just ask me something like:_\n"
-                "`How much PIT should I pay on ₦300,000?`\n\n"
-                "_Type /help anytime to see what I can do!_"
+                "`Try something like:` _How much PIT do I pay on ₦300,000?_"
             )
             bot.send_message(chat_id=chat_id, text=welcome_message, parse_mode="Markdown")
-            print("✅ Sent welcome message")
             return "OK"
 
         bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.TYPING)
 
         try:
-            context_docs = search_knowledge_base(user_text)
-            context_text = "\n\n".join(context_docs)
+            context = get_context(user_text)
+            prompt_messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are TaxWazobia, a friendly and professional Nigerian tax assistant chatbot. "
+                        "Use Naira (₦), simplify tax terms, and always apply Nigerian tax laws.\n\n"
+                        "Refer to the context below when available."
+                    )
+                }
+            ]
+
+            if context:
+                prompt_messages.append({
+                    "role": "user",
+                    "content": f"Use the following context to answer:\n{context}\n\nQuestion: {user_text}"
+                })
+            else:
+                prompt_messages.append({"role": "user", "content": user_text})
 
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are TaxWazobia, a friendly and professional Nigerian tax assistant chatbot. "
-                            "Use the provided context from Nigerian tax documents to answer clearly. "
-                            "Respond in Naira (₦), give examples, and explain as simply as possible.\n\n"
-                            f"Context:\n{context_text}"
-                        )
-                    },
-                    {"role": "user", "content": user_text}
-                ],
+                messages=prompt_messages,
                 temperature=0.4,
                 max_tokens=700
             )
 
             reply = response['choices'][0]['message']['content']
-            print("🤖 OpenAI response:", reply)
-
             bot.send_message(chat_id=chat_id, text=reply, parse_mode="Markdown")
-            print("✅ Sent OpenAI response")
             return "OK"
 
         except Exception as ai_error:
@@ -164,12 +159,12 @@ def receive_update():
         update_metrics(error=True)
         return "Error", 500
 
-# Health check
+# === Health Check ===
 @app.route("/")
 def index():
     return "✅ TaxWazobia bot is running."
 
-# Metrics endpoint
+# === Metrics Endpoint ===
 @app.route("/metrics")
 def metrics():
     try:
@@ -186,10 +181,10 @@ def metrics():
             "error_count": int(error_count)
         })
     except Exception as e:
-        print("❌ Metrics endpoint error:", e)
+        print("❌ Metrics error:", e)
         return jsonify({"error": "Unable to fetch metrics"}), 500
 
-# Local dev only
+# === Local Dev Server ===
 if __name__ == "__main__":
-    print("🚀 TaxWazobia is live and listening on port 5000...")
+    print("🚀 TaxWazobia is running locally on port 5000...")
     app.run(port=5000)
