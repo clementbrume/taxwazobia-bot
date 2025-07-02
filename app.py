@@ -1,4 +1,7 @@
 import os
+import pickle
+import faiss
+import numpy as np
 from dotenv import load_dotenv
 from flask import Flask, request, jsonify
 import openai
@@ -22,6 +25,18 @@ DB_PORT = os.getenv("DB_PORT", "5432")
 openai.api_key = OPENAI_API_KEY
 bot = telegram.Bot(token=TELEGRAM_TOKEN)
 app = Flask(__name__)
+
+# Load FAISS index
+INDEX_PATH = "faiss_index"
+try:
+    index = faiss.read_index(f"{INDEX_PATH}/index.faiss")
+    with open(f"{INDEX_PATH}/documents.pkl", "rb") as f:
+        documents = pickle.load(f)
+    print("📚 Knowledge base index loaded.")
+except Exception as e:
+    index = None
+    documents = []
+    print("⚠️ Failed to load knowledge base:", e)
 
 # DB connection helper
 def connect_db():
@@ -56,6 +71,20 @@ def update_metrics(chat_id=None, error=False):
         conn.close()
     except Exception as e:
         print("❌ DB metrics error:", e)
+
+# Search knowledge base
+def search_knowledge_base(query, top_k=3):
+    try:
+        response = openai.embeddings.create(
+            model="text-embedding-3-small",
+            input=query
+        )
+        query_vector = np.array(response.data[0].embedding, dtype="float32").reshape(1, -1)
+        _, indices = index.search(query_vector, top_k)
+        return [documents[i] for i in indices[0] if i < len(documents)]
+    except Exception as e:
+        print("❌ Knowledge base search error:", e)
+        return []
 
 # Webhook endpoint
 @app.route(f"/{TELEGRAM_TOKEN}", methods=["POST"])
@@ -93,6 +122,9 @@ def receive_update():
         bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.TYPING)
 
         try:
+            context_docs = search_knowledge_base(user_text)
+            context_text = "\n\n".join(context_docs)
+
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
                 messages=[
@@ -100,8 +132,9 @@ def receive_update():
                         "role": "system",
                         "content": (
                             "You are TaxWazobia, a friendly and professional Nigerian tax assistant chatbot. "
-                            "Answer user questions about Nigerian taxes with clear, practical examples. "
-                            "Use Naira (₦), break down terms simply, and give reliable tax guidance using Nigerian context."
+                            "Use the provided context from Nigerian tax documents to answer clearly. "
+                            "Respond in Naira (₦), give examples, and explain as simply as possible.\n\n"
+                            f"Context:\n{context_text}"
                         )
                     },
                     {"role": "user", "content": user_text}
