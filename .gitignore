@@ -1,36 +1,13 @@
-# Python artifacts
+# Python
 __pycache__/
 *.py[cod]
-*.pyo
-
-# Virtual environments
-.venv/
-env/
-venv/
-
-# Environment variables
-.env
 *.env
-secret.env.txt
-
-# IDE settings
+.venv/
+# local data
+*.sqlite3
+# VSCode
 .vscode/
-.idea/
 
-# MacOS
-.DS_Store
-
-# Logs and temporary files
-*.log
-*.tmp
-
-# Render / Docker / deployment
-*.pid
-*.sock
-
-# Byte-compiled / C extensions
-*.so
-
-# Indexing / embeddings caches (if you have other indexes)
-vector_index/
-
+# keep index.faiss and sources.json under version control
+!knowledge_base/index.faiss
+!knowledge_base/sources.json
