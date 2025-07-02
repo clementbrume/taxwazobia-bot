@@ -1,13 +1,32 @@
-# Python
+# Byte‑compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
-*.env
-.venv/
-# local data
-*.sqlite3
-# VSCode
-.vscode/
+*$py.class
 
-# keep index.faiss and sources.json under version control
-!knowledge_base/index.faiss
-!knowledge_base/sources.json
+# Virtual environments
+.venv/
+env/
+venv/
+
+# dotenv secret file
+.env
+
+# Editor / OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Render / build artifacts
+gunicorn.log
+node_modules/
+
+# By default ignore the entire knowledge_base folder…
+knowledge_base/
+
+# …but then un-ignore it and all its contents
+!knowledge_base/
+!knowledge_base/**
+
+# (Ensure any new files in knowledge_base get tracked automatically)
