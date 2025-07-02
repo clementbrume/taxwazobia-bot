@@ -1,0 +1,36 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+env/
+venv/
+
+# Environment variables
+.env
+*.env
+secret.env.txt
+
+# IDE settings
+.vscode/
+.idea/
+
+# MacOS
+.DS_Store
+
+# Logs and temporary files
+*.log
+*.tmp
+
+# Render / Docker / deployment
+*.pid
+*.sock
+
+# Byte-compiled / C extensions
+*.so
+
+# Indexing / embeddings caches (if you have other indexes)
+vector_index/
+
