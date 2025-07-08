@@ -26,12 +26,12 @@ bot = telegram.Bot(token=TELEGRAM_TOKEN)
 app = Flask(__name__)
 
 # === Load FAISS index & sources ===
-INDEX_PATH = "knowledge_base/index.faiss"
-SOURCES_PATH = "knowledge_base/sources.json"
+INDEX_PATH = "vector_index/index.faiss"
+SOURCES_PATH = "vector_index/sources.json"
 
 faiss_index = faiss.read_index(INDEX_PATH)
 with open(SOURCES_PATH, "r", encoding="utf-8") as f:
-    source_texts = json.load(f)
+    source_entries = json.load(f)  # Now a list of dicts with "text" and "source"
 
 # === DB Connection ===
 def connect_db():
@@ -48,7 +48,6 @@ def update_metrics(chat_id=None, error=False):
     try:
         conn = connect_db()
         cur = conn.cursor()
-
         if chat_id:
             cur.execute("SELECT id FROM usage_metrics WHERE chat_id = %s;", (chat_id,))
             if cur.fetchone() is None:
@@ -56,10 +55,8 @@ def update_metrics(chat_id=None, error=False):
                     "INSERT INTO usage_metrics (chat_id, first_seen, error_count) VALUES (%s, %s, %s);",
                     (chat_id, datetime.utcnow(), 0)
                 )
-
         if error and chat_id:
             cur.execute("UPDATE usage_metrics SET error_count = error_count + 1 WHERE chat_id = %s;", (chat_id,))
-
         conn.commit()
         cur.close()
         conn.close()
@@ -74,12 +71,16 @@ def embed_query(text):
     )
     return np.array(response['data'][0]['embedding'], dtype=np.float32)
 
-# === Retrieve Context from FAISS ===
+# === Retrieve Context ===
 def get_context(query, top_k=3):
     query_vec = embed_query(query).reshape(1, -1)
     D, I = faiss_index.search(query_vec, top_k)
-    results = [source_texts[i] for i in I[0] if i < len(source_texts)]
-    return "\n\n".join(results)
+    results = []
+    for i in I[0]:
+        if i < len(source_entries):
+            entry = source_entries[i]
+            results.append(f"From *{entry['source']}*:\n{entry['text']}")
+    return "\n\n---\n\n".join(results)
 
 # === Telegram Webhook ===
 @app.route(f"/{TELEGRAM_TOKEN}", methods=["POST"])
@@ -89,55 +90,49 @@ def receive_update():
         message = update.message
 
         if not message or not message.text:
-            print("⚠️ No message text received.")
             return "OK"
 
         chat_id = message.chat.id
         user_text = message.text.strip()
         print(f"📥 Message from {chat_id}: {user_text}")
-
         update_metrics(chat_id=chat_id)
 
         if user_text.lower().startswith("/start"):
-            welcome_message = (
+            welcome = (
                 "*👋 Welcome to TaxWazobia!*\n\n"
-                "🇳🇬 _Your AI-powered tax assistant for Nigerian tax matters._\n\n"
+                "🇳🇬 _Your AI-powered tax assistant for Nigerian tax laws._\n\n"
                 "*What I can help you with:*\n"
-                "• Calculate your *Personal Income Tax (PIT)*\n"
-                "• Explain *VAT, PAYE, CIT, etc.*\n"
-                "• Guide on FIRS/state rules\n\n"
-                "`Try something like:` _How much PIT do I pay on ₦300,000?_"
+                "• Tax calculations (e.g., PIT, VAT)\n"
+                "• Legal references from official tax acts\n"
+                "• Compliance guidance\n\n"
+                "`Example:` _How much tax on ₦500,000 salary?_"
             )
-            bot.send_message(chat_id=chat_id, text=welcome_message, parse_mode="Markdown")
+            bot.send_message(chat_id=chat_id, text=welcome, parse_mode="Markdown")
             return "OK"
 
         bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.TYPING)
 
         try:
             context = get_context(user_text)
-            prompt_messages = [
+            prompt = [
                 {
                     "role": "system",
                     "content": (
-                        "You are TaxWazobia, a friendly and professional Nigerian tax assistant chatbot. "
-                        "Use Naira (₦), simplify tax terms, and always apply Nigerian tax laws.\n\n"
-                        "Refer to the context below when available."
+                        "You are TaxWazobia, a Nigerian legal tax assistant. "
+                        "Respond with accurate interpretations of Nigerian tax laws using sections from provided legal documents. "
+                        "Always reference the law and act clearly like a professional tax consultant or lawyer."
                     )
+                },
+                {
+                    "role": "user",
+                    "content": f"Use the context below to answer this question.\n\n{context}\n\nQuestion: {user_text}"
                 }
             ]
 
-            if context:
-                prompt_messages.append({
-                    "role": "user",
-                    "content": f"Use the following context to answer:\n{context}\n\nQuestion: {user_text}"
-                })
-            else:
-                prompt_messages.append({"role": "user", "content": user_text})
-
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
-                messages=prompt_messages,
-                temperature=0.4,
+                messages=prompt,
+                temperature=0.3,
                 max_tokens=700
             )
 
@@ -148,10 +143,7 @@ def receive_update():
         except Exception as ai_error:
             print("❌ OpenAI error:", ai_error)
             update_metrics(chat_id=chat_id, error=True)
-            bot.send_message(
-                chat_id=chat_id,
-                text="🤖 Sorry, I couldn’t process that right now. Please try again shortly."
-            )
+            bot.send_message(chat_id=chat_id, text="⚠️ Sorry, I couldn't process your request right now.")
             return "OK"
 
     except Exception as e:
@@ -184,7 +176,7 @@ def metrics():
         print("❌ Metrics error:", e)
         return jsonify({"error": "Unable to fetch metrics"}), 500
 
-# === Local Dev Server ===
+# === Local Server Dev
 if __name__ == "__main__":
     print("🚀 TaxWazobia is running locally on port 5000...")
     app.run(port=5000)
