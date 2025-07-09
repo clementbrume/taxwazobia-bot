@@ -31,7 +31,7 @@ SOURCES_PATH = "vector_index/sources.json"
 
 faiss_index = faiss.read_index(INDEX_PATH)
 with open(SOURCES_PATH, "r", encoding="utf-8") as f:
-    source_entries = json.load(f)  # Now a list of dicts with "text" and "source"
+    source_entries = json.load(f)
 
 # === DB Connection ===
 def connect_db():
@@ -85,7 +85,34 @@ def get_context(query, top_k=3):
 # === Telegram Webhook ===
 @app.route(f"/{TELEGRAM_TOKEN}", methods=["POST"])
 def receive_update():
-            try:
+    try:
+        update = telegram.Update.de_json(request.get_json(force=True), bot)
+        message = update.message
+
+        if not message or not message.text:
+            return "OK"
+
+        chat_id = message.chat.id
+        user_text = message.text.strip()
+        print(f"📥 Message from {chat_id}: {user_text}")
+        update_metrics(chat_id=chat_id)
+
+        if user_text.lower().startswith("/start"):
+            welcome = (
+                "*👋 Welcome to TaxWazobia!*\n\n"
+                "🇳🇬 _Your AI-powered tax assistant for Nigerian tax laws._\n\n"
+                "*What I can help you with:*\n"
+                "• Tax calculations (e.g., PIT, VAT)\n"
+                "• Legal references from official tax acts\n"
+                "• Compliance guidance\n\n"
+                "`Example:` _How much tax on ₦500,000 salary?_"
+            )
+            bot.send_message(chat_id=chat_id, text=welcome, parse_mode="Markdown")
+            return "OK"
+
+        bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.TYPING)
+
+        try:
             context = get_context(user_text)
 
             if not context.strip():
@@ -112,35 +139,6 @@ def receive_update():
                 })
             else:
                 prompt.append({"role": "user", "content": user_text})
-
-            response = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo",
-                messages=prompt,
-                temperature=0.3,
-                max_tokens=700
-            )
-
-            reply = response['choices'][0]['message']['content']
-            bot.send_message(chat_id=chat_id, text=reply, parse_mode="Markdown")
-            return "OK"
-        bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.TYPING)
-
-        try:
-            context = get_context(user_text)
-            prompt = [
-                {
-                    "role": "system",
-                    "content": (
-                        "You are TaxWazobia, a Nigerian legal tax assistant. "
-                        "Respond with accurate interpretations of Nigerian tax laws using sections from provided legal documents. "
-                        "Always reference the law and act clearly like a professional tax consultant or lawyer."
-                    )
-                },
-                {
-                    "role": "user",
-                    "content": f"Use the context below to answer this question.\n\n{context}\n\nQuestion: {user_text}"
-                }
-            ]
 
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
