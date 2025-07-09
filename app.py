@@ -85,30 +85,45 @@ def get_context(query, top_k=3):
 # === Telegram Webhook ===
 @app.route(f"/{TELEGRAM_TOKEN}", methods=["POST"])
 def receive_update():
-    try:
-        update = telegram.Update.de_json(request.get_json(force=True), bot)
-        message = update.message
+            try:
+            context = get_context(user_text)
 
-        if not message or not message.text:
-            return "OK"
+            if not context.strip():
+                print("ℹ️ No legal context found. GPT will answer from knowledge.")
 
-        chat_id = message.chat.id
-        user_text = message.text.strip()
-        print(f"📥 Message from {chat_id}: {user_text}")
-        update_metrics(chat_id=chat_id)
+            prompt = [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are TaxWazobia, a smart Nigerian legal tax assistant.\n\n"
+                        "• When legal context is provided, quote the section and law file it's from.\n"
+                        "• If there's no legal context, respond based on your knowledge of Nigerian tax laws.\n"
+                        "• Always be concise and use Naira (₦) for tax calculations.\n"
+                        "• You may explain PIT, PAYE, VAT, CIT, stamp duty, penalties, deadlines, and reliefs.\n"
+                        "• You may perform tax calculations when asked, even without legal text."
+                    )
+                }
+            ]
 
-        if user_text.lower().startswith("/start"):
-            welcome = (
-                "*👋 Welcome to TaxWazobia!*\n\n"
-                "🇳🇬 _Your AI-powered tax assistant for Nigerian tax laws._\n\n"
-                "*What I can help you with:*\n"
-                "• Tax calculations (e.g., PIT, VAT)\n"
-                "• Legal references from official tax acts\n"
-                "• Compliance guidance\n\n"
-                "`Example:` _How much tax on ₦500,000 salary?_"
+            if context.strip():
+                prompt.append({
+                    "role": "user",
+                    "content": f"Use the legal context below to answer:\n\n{context}\n\nQuestion: {user_text}"
+                })
+            else:
+                prompt.append({"role": "user", "content": user_text})
+
+            response = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=prompt,
+                temperature=0.3,
+                max_tokens=700
             )
-            bot.send_message(chat_id=chat_id, text=welcome, parse_mode="Markdown")
+
+            reply = response['choices'][0]['message']['content']
+            bot.send_message(chat_id=chat_id, text=reply, parse_mode="Markdown")
             return "OK"
+
 
         bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.TYPING)
 
