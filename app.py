@@ -2,6 +2,7 @@ import os
 import json
 import numpy as np
 import faiss
+import re
 from dotenv import load_dotenv
 from flask import Flask, request, jsonify
 import openai
@@ -75,12 +76,25 @@ def embed_query(text):
 def get_context(query, top_k=3):
     query_vec = embed_query(query).reshape(1, -1)
     D, I = faiss_index.search(query_vec, top_k)
-    results = []
+    context_blocks = []
+    citations = []
+
     for i in I[0]:
         if i < len(source_entries):
             entry = source_entries[i]
-            results.append(f"From *{entry['source']}*:\n{entry['text']}")
-    return "\n\n---\n\n".join(results)
+            text = entry["text"]
+            source = entry["source"]
+
+            # Try to extract "Section X" for citation reference
+            match = re.search(r"(Section\s+\d+[^\n]*)", text, flags=re.IGNORECASE)
+            section_ref = match.group(1).strip() if match else "a relevant section"
+
+            context_blocks.append(text)
+            citations.append(f"{source} ({section_ref})")
+
+    context_text = "\n\n---\n\n".join(context_blocks)
+    citation_text = "Sources: " + "; ".join(set(citations)) if citations else ""
+    return context_text, citation_text
 
 # === Telegram Webhook ===
 @app.route(f"/{TELEGRAM_TOKEN}", methods=["POST"])
@@ -113,10 +127,7 @@ def receive_update():
         bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.TYPING)
 
         try:
-            context = get_context(user_text)
-
-            if not context.strip():
-                print("ℹ️ No legal context found. GPT will answer from knowledge.")
+            context, citation_note = get_context(user_text)
 
             prompt = [
                 {
@@ -135,7 +146,7 @@ def receive_update():
             if context.strip():
                 prompt.append({
                     "role": "user",
-                    "content": f"Use the legal context below to answer:\n\n{context}\n\nQuestion: {user_text}"
+                    "content": f"Use the legal context below to answer:\n\n{context}\n\n{citation_note}\n\nQuestion: {user_text}"
                 })
             else:
                 prompt.append({"role": "user", "content": user_text})
@@ -148,6 +159,10 @@ def receive_update():
             )
 
             reply = response['choices'][0]['message']['content']
+
+            if citation_note:
+                reply += f"\n\n📚 *{citation_note}*"
+
             bot.send_message(chat_id=chat_id, text=reply, parse_mode="Markdown")
             return "OK"
 
