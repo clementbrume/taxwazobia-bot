@@ -123,8 +123,6 @@ def receive_update():
             reply = response['choices'][0]['message']['content']
             bot.send_message(chat_id=chat_id, text=reply, parse_mode="Markdown")
             return "OK"
-
-
         bot.send_chat_action(chat_id=chat_id, action=telegram.ChatAction.TYPING)
 
         try:
